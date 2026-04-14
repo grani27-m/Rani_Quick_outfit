@@ -15,7 +15,7 @@ const userSchema = new mongoose.Schema({
     chest: Number,
     waist: Number,
     hip: Number,
-    bodyType: { type: String, enum: ['', 'slim', 'regular', 'athletic', 'plus'], default: '' }
+    bodyType: { type: String, enum: ['', 'slim', 'regular', 'athletic', 'plus', 'hourglass', 'pear', 'apple', 'rectangle', 'inverted-triangle', 'petite', 'plus-size'], default: '' }
   },
   savedAddresses: [{
     label: String,
@@ -26,7 +26,11 @@ const userSchema = new mongoose.Schema({
   loyaltyPoints: { type: Number, default: 0 },
   wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
   fcmToken: String,
-  isActive: { type: Boolean, default: true }
+  isActive: { type: Boolean, default: true },
+  isVerified: { type: Boolean, default: false },
+  refreshToken: { type: String, default: '' },
+  otp: { type: String, default: '' },
+  otpExpiry: { type: Date }
 }, { timestamps: true });
 
 userSchema.pre('save', async function(next) {

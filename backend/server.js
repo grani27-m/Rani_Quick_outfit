@@ -17,6 +17,9 @@ import adminRoutes from './routes/admin.js';
 import chatRoutes from './routes/chat.js';
 import paymentRoutes from './routes/payments.js';
 import uploadRoutes from './routes/upload.js';
+import shadeaiRoutes from './routes/shadeai.js';
+import notificationRoutes from './routes/notifications.js';
+import errorHandler from './middleware/error.js';
 
 dotenv.config();
 
@@ -70,11 +73,16 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/shadeai', shadeaiRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Global error handler (must be after routes)
+app.use(errorHandler);
 
 // Socket.io
 io.on('connection', (socket) => {

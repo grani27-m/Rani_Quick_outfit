@@ -44,6 +44,54 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/products/nearby — products from nearby shops
+router.get('/nearby', async (req, res) => {
+  try {
+    const { lat, lng, radius = 5000 } = req.query;
+    if (!lat || !lng) return res.status(400).json({ message: 'lat and lng query params required' });
+
+    const Shop = (await import('../models/Shop.js')).default;
+    const nearbyShops = await Shop.find({
+      approved: true,
+      location: {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+          $maxDistance: parseInt(radius)
+        }
+      }
+    }).select('_id');
+
+    const shopIds = nearbyShops.map(s => s._id);
+    const products = await Product.find({ shopId: { $in: shopIds }, isActive: true })
+      .populate('shopId', 'name location address rating')
+      .limit(30);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// GET /api/products/tone/:toneId — products by skin tone compatibility
+router.get('/tone/:toneId', async (req, res) => {
+  try {
+    const { toneId } = req.params;
+    const valid = ['fair', 'light', 'medium', 'wheatish', 'dusky', 'dark'];
+    if (!valid.includes(toneId)) return res.status(400).json({ message: 'Invalid tone' });
+
+    const products = await Product.find({
+      isActive: true,
+      [`toneCompatibility.${toneId}`]: { $gte: 75 }
+    })
+      .populate('shopId', 'name location address')
+      .sort({ [`toneCompatibility.${toneId}`]: -1 })
+      .limit(20);
+
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // GET /api/products/:id
 router.get('/:id', async (req, res) => {
   try {

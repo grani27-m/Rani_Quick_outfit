@@ -6,6 +6,8 @@ const shopSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   category: { type: String, enum: ['saree', 'kurta', 'western', 'ethnic', 'kids', 'mens', 'accessories', 'general'], default: 'general' },
   image: { type: String, default: '' },
+  images: [String],
+  city: { type: String, default: 'Delhi' },
   location: {
     type: { type: String, enum: ['Point'], default: 'Point' },
     coordinates: { type: [Number], default: [77.209, 28.6139] } // [lng, lat] default Delhi
@@ -37,8 +39,10 @@ const shopSchema = new mongoose.Schema({
   monthlyRevenue: { type: Number, default: 0 },
   operatingHours: {
     open: { type: String, default: '10:00' },
-    close: { type: String, default: '21:00' }
+    close: { type: String, default: '21:00' },
+    days: { type: [String], default: ['Mon','Tue','Wed','Thu','Fri','Sat'] }
   },
+  totalReviews: { type: Number, default: 0 },
   joinedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 

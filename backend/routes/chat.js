@@ -1,115 +1,60 @@
 import express from 'express';
-import Chat from '../models/Chat.js';
 import { protect } from '../middleware/auth.js';
+import User from '../models/User.js';
 
 const router = express.Router();
 
-// GET /api/chat — get all chats for user
-router.get('/', protect, async (req, res) => {
-  try {
-    const chats = await Chat.find({ participants: req.user._id })
-      .populate('participants', 'name avatar email')
-      .sort({ updatedAt: -1 });
-    res.json(chats);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// GET /api/chat/:chatId — get chat messages
-router.get('/:chatId', protect, async (req, res) => {
-  try {
-    const chat = await Chat.findById(req.params.chatId)
-      .populate('participants', 'name avatar email');
-    
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
-    
-    if (!chat.participants.find(p => p._id.toString() === req.user._id.toString())) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    
-    res.json(chat);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// POST /api/chat — create new chat
 router.post('/', protect, async (req, res) => {
   try {
-    const { participantId, orderId } = req.body;
-    
-    // Check if chat already exists
-    let chat = await Chat.findOne({
-      participants: { $all: [req.user._id, participantId] }
+    const { message, chatHistory = [], contextData = {} } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ message: 'Message is required' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(503).json({ message: 'AI Chat is currently unavailable (Missing API Key)' });
+    }
+
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    // Build the system prompt using dynamic context from the frontend and user role
+    const systemPrompt = `You are an expert, helpful AI assistant built directly into the "QuickOutfit" platform, a hyperlocal fashion marketplace.
+Your current user is a ${req.user.role}. Their name is ${req.user.name}.
+${contextData.skinTone ? `Their identified skin tone is: ${contextData.skinTone}.` : ''}
+${contextData.bodyType ? `Their identified body shape/type is: ${contextData.bodyType}.` : ''}
+
+Rules:
+- Give concise, clear, and extremely accurate advice. Use markdown for readability (bullet points, bold text).
+- If the user is a "customer", act as their personal fashion stylist. Recommend flattering fits, color palettes based on their tone, and style pairings. Emphasize "QuickOutfit" speed (same-day local delivery).
+- If the user is a "shopkeeper", act as a platform support expert. Help them understand how to upload products, improve their shop descriptions, handle orders, or analyze trends.
+- If the user asks about something unrelated to fashion, shopping, or the QuickOutfit platform, politely pivot back to fashion and local shopping.
+- For dress recommendations, specifically mention the silhouettes (A-line, bodycon, wrap, empire waist, peplum, etc.) that flatter their body type and the exact colors that flatter their skin tone.
+`;
+
+    // Convert chatHistory to Gemini format
+    const formattedHistory = chatHistory.map(msg => ({
+      role: msg.sender === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.text }]
+    }));
+
+    const chat = model.startChat({
+      history: [
+        { role: 'user', parts: [{ text: `SYSTEM INSTRUCTION: ${systemPrompt}` }] },
+        { role: 'model', parts: [{ text: 'Understood. I am ready to help.' }] },
+        ...formattedHistory
+      ]
     });
-    
-    if (!chat) {
-      chat = await Chat.create({
-        participants: [req.user._id, participantId],
-        orderId,
-        messages: []
-      });
-    }
-    
-    res.status(201).json(chat);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
 
-// POST /api/chat/:chatId/message — send message
-router.post('/:chatId/message', protect, async (req, res) => {
-  try {
-    const { text, image } = req.body;
-    const chat = await Chat.findById(req.params.chatId);
-    
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
-    
-    if (!chat.participants.find(p => p.toString() === req.user._id.toString())) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    
-    const message = {
-      sender: req.user._id,
-      text,
-      image,
-      timestamp: new Date(),
-      read: false
-    };
-    
-    chat.messages.push(message);
-    await chat.save();
-    
-    // Emit via socket if available
-    if (req.app.get('io')) {
-      req.app.get('io').to(`chat_${chat._id}`).emit('newMessage', {
-        chatId: chat._id,
-        message: { ...message, senderName: req.user.name }
-      });
-    }
-    
-    res.json(message);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+    const result = await chat.sendMessage(message);
+    const replyText = result.response.text();
 
-// PATCH /api/chat/:chatId/messages/:messageId/read — mark message as read
-router.patch('/:chatId/messages/:messageId/read', protect, async (req, res) => {
-  try {
-    const chat = await Chat.findById(req.params.chatId);
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
-    
-    const message = chat.messages.id(req.params.messageId);
-    if (!message) return res.status(404).json({ message: 'Message not found' });
-    
-    message.read = true;
-    await chat.save();
-    
-    res.json(message);
+    res.json({ reply: replyText });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Chat AI Error:', error);
+    res.status(500).json({ message: 'Failed to generate response', error: error.message });
   }
 });
 

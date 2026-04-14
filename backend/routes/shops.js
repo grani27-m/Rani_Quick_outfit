@@ -61,6 +61,27 @@ router.patch('/:id', protect, async (req, res) => {
   }
 });
 
+// GET /api/shops/nearby — list nearby approved shops (geospatial)
+router.get('/nearby', async (req, res) => {
+  try {
+    const { lat, lng, radius = 5000 } = req.query; // default 5km (5000m)
+    if (!lat || !lng) return res.status(400).json({ message: 'lat and lng required' });
+
+    const shops = await Shop.find({
+      approved: true,
+      location: {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+          $maxDistance: parseInt(radius)
+        }
+      }
+    });
+    res.json(shops);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // GET /api/shops/owner/mine (shopkeeper's own shops)
 router.get('/owner/mine', protect, authorize('shopkeeper'), async (req, res) => {
   try {
