@@ -43,7 +43,8 @@ const shopSchema = new mongoose.Schema({
     days: { type: [String], default: ['Mon','Tue','Wed','Thu','Fri','Sat'] }
   },
   totalReviews: { type: Number, default: 0 },
-  joinedAt: { type: Date, default: Date.now }
+  joinedAt: { type: Date, default: Date.now },
+  isSeeded: { type: Boolean, default: false }
 }, { timestamps: true });
 
 shopSchema.index({ location: '2dsphere' });

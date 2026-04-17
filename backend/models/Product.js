@@ -28,7 +28,8 @@ const productSchema = new mongoose.Schema({
   isFeatured: { type: Boolean, default: false },
   discount: { type: Number, default: 0 },
   tags: [String],
-  blockchainTokenId: String
+  blockchainTokenId: String,
+  isSeeded: { type: Boolean, default: false }
 }, { timestamps: true });
 
 productSchema.index({ name: 'text', description: 'text' });

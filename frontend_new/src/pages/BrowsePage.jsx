@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { productsAPI } from '../api/products.api';
 import ProductCard from '../components/common/ProductCard';
 import SearchBar from '../components/common/SearchBar';
@@ -8,6 +8,7 @@ import { SlidersHorizontal, X } from 'lucide-react';
 
 export default function BrowsePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -16,6 +17,8 @@ export default function BrowsePage() {
   const [filters, setFilters] = useState({
     category: searchParams.get('category') || 'all',
     search: searchParams.get('search') || '',
+    shopId: searchParams.get('shopId') || '',
+    shopName: searchParams.get('shopName') || '',
     sort: 'newest',
     minPrice: '',
     maxPrice: '',
@@ -32,6 +35,7 @@ export default function BrowsePage() {
       if (filters.minPrice) params.minPrice = filters.minPrice;
       if (filters.maxPrice) params.maxPrice = filters.maxPrice;
       if (filters.sizes) params.sizes = filters.sizes;
+      if (filters.shopId) params.shopId = filters.shopId;
 
       const { data } = await productsAPI.getAll(params);
       setProducts(data.products || []);
@@ -57,6 +61,14 @@ export default function BrowsePage() {
           <div>
             <h1 className="section-heading">Browse Products</h1>
             <p className="section-sub">{total} products found</p>
+            {filters.shopId && (
+              <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--amber-pale)', border: '1px solid var(--amber)', borderRadius: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <p style={{ color: 'var(--rust)', fontWeight: 600, margin: 0 }}>Showing products from: {filters.shopName || 'Store'}</p>
+                <button onClick={() => { setFilters(f => ({ ...f, shopId: '', shopName: '' })); navigate('/browse'); }} style={{ background: 'none', border: 'none', color: 'var(--amber)', textDecoration: 'underline', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                  View All
+                </button>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <SearchBar value={filters.search} onChange={handleSearch} />

@@ -1,244 +1,268 @@
-import express from 'express';
-import Order from '../models/Order.js';
-import Product from '../models/Product.js';
-import { protect, authorize } from '../middleware/auth.js';
+import express from 'express'
+import Order from '../models/Order.js'
+import Product from '../models/Product.js'
+import Shop from '../models/Shop.js'
+import { protect, authorize } from '../middleware/auth.js'
 
-const router = express.Router();
+const router = express.Router()
 
-// POST /api/orders — create new order
-router.post('/', protect, async (req, res) => {
+// ── PLACE ORDER ─────────────────────────────────────────────
+router.post('/', protect, authorize('customer'), async (req, res) => {
   try {
-    const { items, shopId, deliveryAddress, paymentMethod, subtotal, deliveryFee, discount, totalAmount, couponCode } = req.body;
-    const otp = String(Math.floor(1000 + Math.random() * 9000));
+    const { items, deliveryAddress, paymentMethod } = req.body
+    
+    // 1. Validate all items and extract shopId from products (NEVER from frontend)
+    let shopId = null
+    let subtotal = 0
+    const validatedItems = []
 
+    for (const item of items) {
+      const product = await Product.findById(item.productId)
+      if (!product || !product.isActive) {
+        return res.status(400).json({ message: `Product ${item.productId} not found or inactive` })
+      }
+      if (product.stock < item.qty) {
+        return res.status(400).json({ 
+          message: `Only ${product.stock} units of "${product.name}" available` 
+        })
+      }
+      if (!shopId) shopId = product.shopId
+      subtotal += product.price * item.qty
+      validatedItems.push({
+        productId: product._id,
+        name: product.name,
+        price: product.price,
+        qty: item.qty,
+        size: item.size,
+        color: item.color,
+        image: product.images[0]
+      })
+    }
+
+    const deliveryFee = subtotal >= 999 ? 0 : 49
+    const totalAmount = subtotal + deliveryFee
+    const deliveryOTP = Math.floor(1000 + Math.random() * 9000).toString()
+    
+    // 2. Create order
     const order = await Order.create({
       customerId: req.user._id,
       shopId,
-      items,
+      items: validatedItems,
       deliveryAddress,
-      paymentMethod: paymentMethod || 'cod',
+      paymentMethod,
       subtotal,
-      deliveryFee: deliveryFee || 30,
-      discount: discount || 0,
+      deliveryFee,
       totalAmount,
-      couponCode,
-      deliveryOTP: otp,
-      isPaid: paymentMethod !== 'cod',
-      timeline: [{ status: 'placed', timestamp: new Date(), note: 'Order placed successfully' }]
-    });
+      deliveryOTP,
+      status: 'placed',
+      paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed',
+      timeline: [{ status: 'placed', timestamp: new Date(), note: 'Order placed by customer' }]
+    })
 
-    // Reduce stock
+    // 3. Reduce stock for all items
     for (const item of items) {
-      await Product.findByIdAndUpdate(item.productId, { $inc: { stock: -item.qty } });
+      await Product.findByIdAndUpdate(item.productId, { $inc: { stock: -item.qty } })
     }
 
-    res.status(201).json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    // 4. Populate order for socket emit
+    const populated = await Order.findById(order._id)
+      .populate('customerId', 'name phone email')
+      .populate('shopId', 'name ownerId')
+
+    // 5. Emit Socket.io to shopkeeper — real-time notification
+    const io = req.app.get('io')
+    const shopOwner = populated.shopId.ownerId.toString()
+    io.to(`user:${shopOwner}`).emit('newOrder', {
+      orderId: order._id,
+      orderRef: order._id.toString().slice(-8).toUpperCase(),
+      customerName: populated.customerId.name,
+      customerPhone: populated.customerId.phone,
+      items: validatedItems,
+      totalAmount,
+      paymentMethod,
+      deliveryAddress,
+      status: 'placed',
+      timestamp: new Date().toISOString()
+    })
+
+    // 6. Real-time notification to customer (confirmation)
+    io.to(`user:${req.user._id}`).emit('orderConfirmation', {
+      orderId: order._id,
+      message: `Order placed! Waiting for shop to confirm.`,
+      status: 'placed',
+      deliveryOTP,
+      totalAmount
+    })
+
+    res.status(201).json({ success: true, order: populated })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
   }
-});
+})
 
-// GET /api/orders — get orders for current user
-router.get('/', protect, async (req, res) => {
-  try {
-    let query;
-    if (req.user.role === 'customer') {
-      query = { customerId: req.user._id };
-    } else if (req.user.role === 'shopkeeper') {
-      query = { shopId: req.query.shopId };
-    } else if (req.user.role === 'delivery') {
-      query = { deliveryPartnerId: req.user._id };
-    } else {
-      query = {};
-    }
-
-    if (req.query.status) query.status = req.query.status;
-
-    const orders = await Order.find(query)
-      .populate('customerId', 'name email phone')
-      .populate('shopId', 'name address')
-      .populate('deliveryPartnerId', 'name phone')
-      .sort({ createdAt: -1 });
-
-    res.json(orders);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// GET /api/orders/:id
-router.get('/:id', protect, async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.id)
-      .populate('customerId', 'name email phone')
-      .populate('shopId', 'name address phone')
-      .populate('deliveryPartnerId', 'name phone');
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// PATCH /api/orders/:id/status — update order status
+// ── UPDATE ORDER STATUS (shopkeeper / delivery / admin) ─────
 router.patch('/:id/status', protect, async (req, res) => {
   try {
-    const { status, note } = req.body;
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-
-    order.status = status;
-    order.timeline.push({ status, timestamp: new Date(), note: note || `Status updated to ${status}` });
-
-    if (req.body.deliveryPartnerId) order.deliveryPartnerId = req.body.deliveryPartnerId;
-
-    await order.save();
-
-    // Emit socket event if io is available
-    if (req.app.get('io')) {
-      req.app.get('io').to(`order_${order._id}`).emit('orderUpdate', order);
-    }
-
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// POST /api/orders/:id/verify-otp — delivery confirms
-router.post('/:id/verify-otp', protect, async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (req.body.otp !== order.deliveryOTP) {
-      return res.status(400).json({ message: 'Invalid OTP' });
-    }
-    order.status = 'delivered';
-    order.isPaid = true;
-    order.timeline.push({ status: 'delivered', timestamp: new Date(), note: 'Delivered and verified with OTP' });
-    await order.save();
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// POST /api/orders/:id/cancel — cancel order
-router.post('/:id/cancel', protect, async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    
-    if (order.customerId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    
-    if (['delivered', 'cancelled'].includes(order.status)) {
-      return res.status(400).json({ message: `Cannot cancel ${order.status} order` });
-    }
-    
-    // Restore stock
-    for (const item of order.items) {
-      await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.qty } });
-    }
-    
-    order.status = 'cancelled';
-    order.cancellationReason = req.body.reason || 'Customer cancelled';
-    order.timeline.push({ status: 'cancelled', timestamp: new Date(), note: order.cancellationReason });
-    await order.save();
-    
-    // Emit socket event
-    if (req.app.get('io')) {
-      req.app.get('io').to(`order_${order._id}`).emit('orderCancelled', order);
-    }
-    
-    res.json({ message: 'Order cancelled', order });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// GET /api/orders/:id/tracking — real-time tracking
-router.get('/:id/tracking', protect, async (req, res) => {
-  try {
+    const { status, note } = req.body
     const order = await Order.findById(req.params.id)
-      .populate('deliveryPartnerId', 'name phone')
-      .populate('shopId', 'name');
+      .populate('customerId', 'name')
+      .populate('shopId', 'name ownerId')
     
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    
-    res.json({
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+
+    const io = req.app.get('io')
+    const validTransitions = {
+      shopkeeper: {
+        placed:    ['confirmed', 'cancelled'],
+        confirmed: ['packed', 'cancelled'],
+        packed:    ['ready_to_dispatch']
+      },
+      delivery: {
+        ready_to_dispatch: ['picked'],
+        picked:            ['delivering'],
+        delivering:        ['delivered']
+      },
+      admin: ['cancelled', 'returned']
+    }
+
+    const allowedForRole = validTransitions[req.user.role]
+    if (allowedForRole && !Array.isArray(allowedForRole)) {
+      const currentAllowed = allowedForRole[order.status]
+      if (!currentAllowed || !currentAllowed.includes(status)) {
+        return res.status(400).json({ 
+          message: `Cannot change status from ${order.status} to ${status}` 
+        })
+      }
+    }
+
+    order.status = status
+    order.timeline.push({ status, timestamp: new Date(), note: note || `Status updated to ${status}` })
+    await order.save()
+
+    // Real-time notification to CUSTOMER on every status change
+    const messages = {
+      confirmed:          '✅ Your order has been confirmed by the shop!',
+      packed:             '📦 Your order is packed and ready.',
+      ready_to_dispatch:  '🚀 Your order is ready to dispatch!',
+      picked:             '🚴 Delivery partner has picked up your order.',
+      delivering:         '📍 Your order is out for delivery!',
+      delivered:          '🎉 Order delivered! Enjoy your purchase.',
+      cancelled:          '❌ Your order has been cancelled.'
+    }
+
+    io.to(`user:${order.customerId._id}`).emit('orderStatusUpdate', {
       orderId: order._id,
-      status: order.status,
-      timeline: order.timeline,
-      shop: order.shopId,
-      deliveryPartner: order.deliveryPartnerId,
-      deliveryAddress: order.deliveryAddress,
-      estimatedDelivery: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours from now
-      currentLocation: { lat: 28.6139, lng: 77.2090 } // Mock location
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+      status,
+      message: messages[status] || `Order status: ${status}`,
+      timestamp: new Date().toISOString()
+    })
 
-// POST /api/orders/:id/return — initiate return/RMA
-router.post('/:id/return', protect, async (req, res) => {
+    // Notify delivery partners when ready_to_dispatch
+    if (status === 'ready_to_dispatch') {
+      io.to('delivery:available').emit('newDeliveryAvailable', {
+        orderId: order._id,
+        orderRef: order._id.toString().slice(-8).toUpperCase(),
+        shopName: order.shopId.name,
+        deliveryAddress: order.deliveryAddress,
+        totalAmount: order.totalAmount,
+        estimatedEarning: Math.max(30, Math.floor(order.totalAmount * 0.05))
+      })
+    }
+
+    // Notify shopkeeper when delivery picks up
+    if (status === 'picked') {
+      io.to(`user:${order.shopId.ownerId}`).emit('orderPickedUp', {
+        orderId: order._id,
+        message: 'Order has been picked up by delivery partner.'
+      })
+    }
+
+    res.json({ success: true, order })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// ── VERIFY DELIVERY OTP ──────────────────────────────────────
+router.post('/:id/verify-otp', protect, authorize('delivery'), async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    
-    if (order.customerId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    
-    if (order.status !== 'delivered') {
-      return res.status(400).json({ message: 'Can only return delivered orders' });
-    }
-    
-    // Create return status
-    order.returnRequested = true;
-    order.returnReason = req.body.reason;
-    order.timeline.push({ 
-      status: 'return-requested', 
-      timestamp: new Date(), 
-      note: `Return requested: ${req.body.reason}` 
-    });
-    await order.save();
-    
-    res.json({ message: 'Return request submitted', order });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+    const { otp } = req.body
+    const order = await Order.findById(req.params.id).populate('customerId', 'name')
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (order.deliveryOTP !== otp) return res.status(400).json({ message: 'Invalid OTP' })
 
-// PATCH /api/orders/:id/assign-delivery — assign delivery partner
-router.patch('/:id/assign-delivery', protect, authorize('shopkeeper', 'admin'), async (req, res) => {
-  try {
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { deliveryPartnerId: req.body.deliveryPartnerId },
-      { new: true }
-    ).populate('deliveryPartnerId', 'name phone');
-    
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    
-    order.timeline.push({ 
-      status: 'assigned', 
-      timestamp: new Date(), 
-      note: 'Delivery partner assigned'
-    });
-    await order.save();
-    
-    // Emit socket event
-    if (req.app.get('io')) {
-      req.app.get('io').to(`order_${order._id}`).emit('deliveryAssigned', order);
-    }
-    
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+    order.status = 'delivered'
+    order.paymentStatus = 'completed'
+    order.timeline.push({ status: 'delivered', timestamp: new Date(), note: 'Delivery confirmed by OTP' })
+    await order.save()
 
-export default router;
+    const io = req.app.get('io')
+    io.to(`user:${order.customerId._id}`).emit('orderStatusUpdate', {
+      orderId: order._id,
+      status: 'delivered',
+      message: '🎉 Order delivered! Thank you for shopping with QuickOutfit.',
+    })
+
+    res.json({ success: true, message: 'Order marked as delivered' })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// ── GET ORDERS ───────────────────────────────────────────────
+router.get('/my', protect, authorize('customer'), async (req, res) => {
+  const orders = await Order.find({ customerId: req.user._id })
+    .populate('shopId', 'name').sort({ createdAt: -1 })
+  res.json(orders)
+})
+
+router.get('/shop', protect, authorize('shopkeeper'), async (req, res) => {
+  const shop = await Shop.findOne({ ownerId: req.user._id })
+  if (!shop) return res.json([])
+  const orders = await Order.find({ shopId: shop._id })
+    .populate('customerId', 'name phone email').sort({ createdAt: -1 })
+  res.json(orders)
+})
+
+router.get('/delivery/available', protect, authorize('delivery'), async (req, res) => {
+  const orders = await Order.find({ status: 'ready_to_dispatch', deliveryPartnerId: null })
+    .populate('shopId', 'name address').populate('customerId', 'name phone')
+  res.json(orders)
+})
+
+router.post('/:id/accept-delivery', protect, authorize('delivery'), async (req, res) => {
+  const order = await Order.findByIdAndUpdate(req.params.id, {
+    deliveryPartnerId: req.user._id,
+    status: 'picked',
+    $push: { timeline: { status: 'picked', timestamp: new Date(), note: 'Accepted by delivery partner' } }
+  }, { new: true }).populate('customerId', 'name phone').populate('shopId', 'name address')
+
+  const io = req.app.get('io')
+  io.to(`user:${order.customerId._id}`).emit('orderStatusUpdate', {
+    orderId: order._id,
+    status: 'picked',
+    message: '🚴 Delivery partner has picked up your order and is on the way!'
+  })
+
+  res.json({ success: true, order })
+})
+
+router.get('/:id', protect, async (req, res) => {
+  const order = await Order.findById(req.params.id)
+    .populate('customerId', 'name phone email')
+    .populate('shopId', 'name address phone')
+    .populate('deliveryPartnerId', 'name phone')
+  if (!order) return res.status(404).json({ message: 'Not found' })
+  res.json(order)
+})
+
+router.get('/admin/all', protect, authorize('admin'), async (req, res) => {
+  const orders = await Order.find()
+    .populate('customerId', 'name email')
+    .populate('shopId', 'name')
+    .populate('deliveryPartnerId', 'name')
+    .sort({ createdAt: -1 })
+  res.json(orders)
+})
+
+export default router

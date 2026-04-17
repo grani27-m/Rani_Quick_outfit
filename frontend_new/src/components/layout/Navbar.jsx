@@ -5,8 +5,49 @@ import useAuthStore from '../../store/authStore';
 import useCartStore from '../../store/cartStore';
 import useWishlistStore from '../../store/wishlistStore';
 import useUIStore from '../../store/uiStore';
+import { useNotificationStore } from '../../store/notificationStore';
 import LoginForm from '../forms/LoginForm';
 import RegisterForm from '../forms/RegisterForm';
+
+function NotificationBell() {
+  const { notifications, unreadCount, markAllRead } = useNotificationStore()
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => { setOpen(!open); if (!open) markAllRead() }}
+        style={{ position: 'relative', padding: 8, borderRadius: '50%', background: 'none', border: 'none', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center' }}
+      >
+        <Bell size={20} color="var(--charcoal)" />
+        {unreadCount > 0 && (
+          <span style={{ position: 'absolute', top: 0, right: 0, background: '#ef4444', color: 'white', fontSize: 10, borderRadius: '50%', width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 8, width: 320, background: 'white', border: '1px solid var(--border)', borderRadius: 16, boxShadow: 'var(--shadow-md)', zIndex: 100, maxHeight: 400, overflowY: 'auto' }}>
+          <div style={{ padding: 12, borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 14 }}>Notifications</div>
+          {notifications.length === 0 ? (
+            <p style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>No notifications yet</p>
+          ) : (
+            notifications.map(n => (
+              <div key={n.id} style={{ padding: 12, borderBottom: '1px solid var(--border)', background: n.read ? 'white' : 'var(--amber-pale)' }}>
+                <p style={{ fontWeight: 600, fontSize: 14, margin: '0 0 4px 0', color: 'var(--charcoal)' }}>{n.title}</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 4px 0' }}>{n.body}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: 0 }}>
+                  {new Date(n.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Navbar() {
   const { user, isLoggedIn, logout } = useAuthStore();
@@ -18,18 +59,19 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const navLinks = [
-    { path: '/', label: 'Home' },
-    { path: '/browse', label: 'Browse' },
-    { path: '/stores', label: 'Stores' },
-    { path: '/shade-ai', label: '✨ Shade AI' },
-  ];
-
   const getDashboardPath = () => {
     if (!user) return '/';
     const map = { customer: '/dashboard', shopkeeper: '/shop-dashboard', delivery: '/delivery-dashboard', admin: '/admin' };
     return map[user.role] || '/dashboard';
   };
+
+  const navLinks = [
+    { path: '/', label: 'Home' },
+    { path: '/browse', label: 'Browse' },
+    { path: '/stores', label: 'Stores' },
+    ...(user ? [{ path: getDashboardPath(), label: 'Dashboard' }] : []),
+    { path: '/shade-ai', label: '✨ Shade AI' },
+  ];
 
   const handleLogout = () => {
     logout();
@@ -53,6 +95,7 @@ export default function Navbar() {
         <div className="nav-actions">
           {isLoggedIn() ? (
             <>
+              <NotificationBell />
               <Link to="/cart" className="cart-btn" title="Cart">
                 <ShoppingBag size={18} />
                 {cartCount > 0 && <span className="cart-count">{cartCount}</span>}

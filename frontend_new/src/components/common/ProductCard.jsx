@@ -56,9 +56,30 @@ export default function ProductCard({ product }) {
           <Heart size={16} fill={isWished ? '#E53E3E' : 'none'} color={isWished ? '#E53E3E' : 'var(--text-muted)'} />
         </button>
 
+        {product.outOfStock && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ background: '#ef4444', color: 'white', fontWeight: 700, padding: '8px 16px', borderRadius: 999, fontSize: 14 }}>
+              OUT OF STOCK
+            </span>
+          </div>
+        )}
+
+        {product.lowStock && !product.outOfStock && (
+          <div style={{ position: 'absolute', top: 10, left: discount > 0 ? 85 : 10, zIndex: 10 }}>
+            <span style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 10, padding: '4px 8px', borderRadius: 999, fontWeight: 600 }}>
+              Only {product.stock} left
+            </span>
+          </div>
+        )}
+
         {/* Quick add */}
-        <button onClick={handleAddToCart} style={{ position: 'absolute', bottom: 10, right: 10, padding: '8px 14px', borderRadius: 8, background: 'var(--amber)', color: 'white', border: 'none', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, opacity: 0, transition: 'opacity 0.3s' }} className="quick-add">
-          <ShoppingBag size={14} /> Add
+        <button 
+          onClick={(e) => !product.outOfStock && handleAddToCart(e)} 
+          disabled={product.outOfStock}
+          style={{ position: 'absolute', bottom: 10, right: 10, padding: '8px 14px', borderRadius: 8, background: product.outOfStock ? '#e5e7eb' : 'var(--amber)', color: product.outOfStock ? '#9ca3af' : 'white', border: 'none', fontSize: 12, fontWeight: 600, cursor: product.outOfStock ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 4, opacity: product.outOfStock ? 1 : 0, transition: 'opacity 0.3s' }} 
+          className="quick-add"
+        >
+          {product.outOfStock ? 'Out of Stock' : <><ShoppingBag size={14} /> Add</>}
         </button>
       </div>
 

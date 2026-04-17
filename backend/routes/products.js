@@ -5,44 +5,53 @@ import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// GET /api/products — list with filters
+// GET all products with full filtering including stock status
 router.get('/', async (req, res) => {
   try {
-    const { search, category, minPrice, maxPrice, sizes, sort, page = 1, limit = 20 } = req.query;
-    let query = { isActive: true };
-
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
+    const { category, search, minPrice, maxPrice, tone, shopId, page = 1, limit = 20 } = req.query
+    const filter = { isActive: true }
+    
+    if (category && category !== 'all') filter.category = category
+    if (shopId) filter.shopId = shopId
+    if (minPrice || maxPrice) filter.price = {}
+    if (minPrice) filter.price.$gte = Number(minPrice)
+    if (maxPrice) filter.price.$lte = Number(maxPrice)
+    if (search) filter.$text = { $search: search }
+    if (tone) {
+      filter[`toneCompatibility.${tone}`] = { $gte: 75 }
     }
-    if (category && category !== 'all') query.category = category;
-    if (minPrice || maxPrice) {
-      query.price = {};
-      if (minPrice) query.price.$gte = Number(minPrice);
-      if (maxPrice) query.price.$lte = Number(maxPrice);
-    }
-    if (sizes) query.sizes = { $in: sizes.split(',') };
 
-    let sortObj = { createdAt: -1 };
-    if (sort === 'price-asc') sortObj = { price: 1 };
-    else if (sort === 'price-desc') sortObj = { price: -1 };
-    else if (sort === 'rating') sortObj = { rating: -1 };
-    else if (sort === 'newest') sortObj = { createdAt: -1 };
-
-    const products = await Product.find(query)
-      .populate('shopId', 'name location address rating')
-      .sort(sortObj)
+    const products = await Product.find(filter)
+      .populate('shopId', 'name city isLive isApproved')
+      .sort({ isFeatured: -1, rating: -1 })
       .skip((page - 1) * limit)
-      .limit(Number(limit));
+      .limit(Number(limit))
 
-    const total = await Product.countDocuments(query);
-    res.json({ products, total, page: Number(page), pages: Math.ceil(total / limit) });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    // Add outOfStock flag to each product
+    const withStockStatus = products.map(p => ({
+      ...p.toObject(),
+      outOfStock: p.stock === 0,
+      lowStock: p.stock > 0 && p.stock <= 5
+    }))
+
+    const total = await Product.countDocuments(filter)
+    res.json({ products: withStockStatus, total, pages: Math.ceil(total / limit) })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
   }
-});
+})
+
+// GET products by shop (for Stores page — click on store → see its products)
+router.get('/by-shop/:shopId', async (req, res) => {
+  try {
+    const products = await Product.find({ 
+      shopId: req.params.shopId, isActive: true 
+    }).sort({ rating: -1 })
+    res.json(products.map(p => ({ ...p.toObject(), outOfStock: p.stock === 0 })))
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
 
 // GET /api/products/nearby — products from nearby shops
 router.get('/nearby', async (req, res) => {
@@ -106,7 +115,12 @@ router.get('/:id', async (req, res) => {
 // POST /api/products (shopkeeper only)
 router.post('/', protect, authorize('shopkeeper', 'admin'), async (req, res) => {
   try {
-    const product = await Product.create({ ...req.body });
+    // Auto-fetch shopId from the logged-in user's shop — never trust frontend
+    const shop = await Shop.findOne({ ownerId: req.user._id });
+    if (!shop) {
+      return res.status(400).json({ message: 'You must register your shop before adding products' });
+    }
+    const product = await Product.create({ ...req.body, shopId: shop._id });
     res.status(201).json(product);
   } catch (error) {
     res.status(500).json({ message: error.message });

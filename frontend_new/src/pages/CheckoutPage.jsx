@@ -42,7 +42,7 @@ export default function CheckoutPage() {
 
       const shopId = cartData.items[0]?.productId?.shopId?._id || cartData.items[0]?.productId?.shopId;
 
-      const { data: order } = await ordersAPI.create({
+      const { data } = await ordersAPI.create({
         items,
         shopId,
         deliveryAddress: address,
@@ -56,7 +56,7 @@ export default function CheckoutPage() {
       await cartAPI.clear();
       clearCart();
       toast.success('Order placed successfully!');
-      navigate(`/track/${order._id}`);
+      navigate(`/track/${data.order._id}`);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to place order');
     } finally {

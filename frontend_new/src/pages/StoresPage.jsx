@@ -149,7 +149,7 @@ export default function StoresPage() {
                         <span className={`badge ${selectedShop.isLive ? 'badge-green' : 'badge-gray'}`} style={{ marginBottom: 12, display: 'inline-block' }}>
                           {selectedShop.isLive ? 'Open' : 'Closed'}
                         </span>
-                        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={() => navigate(`/browse?shopId=${selectedShop._id}`)}>
+                        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={() => navigate(`/browse?shopId=${selectedShop._id}&shopName=${encodeURIComponent(selectedShop.name)}`)}>
                           View Products
                         </button>
                       </div>
@@ -164,7 +164,7 @@ export default function StoresPage() {
               shops.length > 0 ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 24, marginBottom: 48 }}>
                   {shops.map((shop) => (
-                    <div key={shop._id} className="card" style={{ cursor: 'pointer', transition: 'transform 0.2s', ':hover': { transform: 'translateY(-4px)' } }} onClick={() => navigate(`/browse?shopId=${shop._id}`)}>
+                    <div key={shop._id} className="card" style={{ cursor: 'pointer', transition: 'transform 0.2s', ':hover': { transform: 'translateY(-4px)' } }} onClick={() => navigate(`/browse?shopId=${shop._id}&shopName=${encodeURIComponent(shop.name)}`)}>
                       <div style={{ height: 160, background: 'linear-gradient(135deg, var(--amber-pale), var(--sage-light))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 48 }}>
                         🏪
                       </div>

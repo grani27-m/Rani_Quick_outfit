@@ -14,19 +14,38 @@ const generateRefreshToken = (id) => {
 router.post('/register', async (req, res) => {
   try {
     const { name, email, phone, password, role, shopName } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(400).json({ message: 'User already exists' });
+
+    // Validation
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'Name, email and password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    }
+
+    // Check email duplicate
+    const emailExists = await User.findOne({ email: email.toLowerCase() });
+    if (emailExists) return res.status(409).json({ message: 'Email already registered' });
+
+    // Check phone duplicate (if provided)
+    if (phone) {
+      const phoneExists = await User.findOne({ phone });
+      if (phoneExists) return res.status(409).json({ message: 'Phone number already registered' });
+    }
 
     // Generate 6-digit OTP
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
+    // Create user — password is hashed automatically by Mongoose pre('save') hook
     const user = await User.create({
-      name,
-      email: email.toLowerCase(),
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
       phone,
       password,
       role: role || 'customer',
+      isActive: true,
+      isVerified: false,
       otp,
       otpExpiry
     });

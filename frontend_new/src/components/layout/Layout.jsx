@@ -2,8 +2,10 @@ import { Outlet } from 'react-router-dom';
 import Navbar from './Navbar';
 import Footer from './Footer';
 import { Toaster } from 'react-hot-toast';
+import { useSocket } from '../../hooks/useSocket';
 
 export default function Layout() {
+  useSocket();
   return (
     <>
       <Toaster position="bottom-right" toastOptions={{
